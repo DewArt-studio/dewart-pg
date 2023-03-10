@@ -1,6 +1,6 @@
-import { Pool } from "pg";
+import pg from "pg";
 import { createHmac } from "crypto";
-
+const Pool = pg.Pool;
 /**
  * @fileoverview a small shell for the pg package
  * @author DewArt Studio
@@ -30,27 +30,27 @@ class DewartPG {
     /**
      * closes database connections
      */
-    close() {
+    close(callback) {
         this._pool.end(() => {
-            console.log("Соединение закрыто");
+            if (callback !== undefined) callback();
         });
     }
 
     /**
      * Performs an async query to the database
      * @param {String} query database query
+     * @param {Array<String>} values query values
      * @param {function} callback database query the query result handler can accept the query result
      * @param {function} error the error handler can accept an error
      * @returns {Object} can return the result of the callback function
      */
-    query(query, callback, error) {
-        console.log(query);
+    query(query, values, callback, error) {
         this._pool.connect((err, client, release) => {
             if (err) return error(err);
-            client.query(query, (err, result) => {
+            client.query(query, values, (err, result) => {
                 release();
-                if (err) return error(err);
-                return callback(result);
+                if (err && typeof err === "function") return error(err);
+                if (typeof callback === "function") return callback(result);
             });
         });
     }
@@ -58,13 +58,14 @@ class DewartPG {
     /**
      * Performs an sync query to the database
      * @param {String} query database query
+     * @param {Array<String>} values query values
      */
-    async syncQuery(query) {
+    async querySync(query, values) {
         let client, result;
         try {
             client = await this._pool.connect();
             try {
-                result = await client.query(query);
+                result = await client.query(query, values);
                 client.release();
                 return result;
             } catch (err) {
@@ -85,7 +86,7 @@ class DewartPG {
      *
      * query = "SELECT * FROM table_name WHERE {%login%} = \'{&login&}\'"
      *
-     * result query = "SELECT * FROM table_name WHERE login = (hash of the word login)"
+     * result query = "SELECT * FROM table_name WHERE login = $1" ['hash of the word login']
      * @param {Object} params value object {hash{...},other{...}}
      * @param {Object} params.hash the fields of this object must contain strings that need to be hashed
      * @param {Object} params.other the fields of this object must contain strings that need to be hashed
@@ -98,10 +99,16 @@ class DewartPG {
             if (this._configs === undefined || this._configs.hash.secret === undefined)
                 throw Error("The object's configurations do not contain a secret key for encryption. Add an object to the object's constructor: \nconst options = {\n   cryptoKey: '<values>'\n}\nlet dpg = new Postgres(options)\n\n");
             params = this._prepareHashParams(params);
-            for (let i = 0; i < params.length; i++) query = query.replace(new RegExp(`{%${params[i].name}%}`, "g"), params[i].name).replace(new RegExp(`{&${params[i].name}&}`, "g"), params[i].value);
-            this.query(query, callback, error);
+
+            let counter = 0;
+            let values = [];
+            for (let i = 0; i < params.length; i++) {
+                query = query.replace(new RegExp(`{%${params[i].name}%}`, "g"), params[i].name).replace(new RegExp(`{&${params[i].name}&}`, "g"), `$${++counter}`);
+                values.push(params[i].value);
+            }
+            this.query(query, values, callback, error);
         } catch (err) {
-            error(err);
+            if (err && typeof err === "function") return error(err);
         }
     }
 
@@ -114,7 +121,7 @@ class DewartPG {
      *
      * query = "SELECT * FROM table_name WHERE {%login%} = \'{&login&}\'"
      *
-     * result query = "SELECT * FROM table_name WHERE login = (hash of the word login)"
+     * result query = "SELECT * FROM table_name WHERE login = $1" ['hash of the word login']
      * @param {Object} params value object {hash{...},other{...}}
      * @param {Object} params.hash the fields of this object must contain strings that need to be hashed
      * @param {Object} params.other the fields of this object must contain strings that need to be hashed
@@ -125,8 +132,13 @@ class DewartPG {
             if (this._configs === undefined || this._configs.hash.secret === undefined)
                 throw Error("The object's configurations do not contain a secret key for encryption. Add an object to the object's constructor: \nconst options = {\n   cryptoKey: '<values>'\n}\nlet dpg = new Postgres(options)\n\n");
             params = this._prepareHashParams(params);
-            for (let i = 0; i < params.length; i++) query = query.replace(new RegExp(`{%${params[i].name}%}`, "g"), params[i].name).replace(new RegExp(`{&${params[i].name}&}`, "g"), params[i].value);
-            return await this.syncQuery(query);
+            let counter = 0;
+            let values = [];
+            for (let i = 0; i < params.length; i++) {
+                query = query.replace(new RegExp(`{%${params[i].name}%}`, "g"), params[i].name).replace(new RegExp(`{&${params[i].name}&}`, "g"), `$${++counter}`);
+                values.push(params[i].value);
+            }
+            return await this.syncQuery(query, values);
         } catch (err) {
             console.log(err);
         }
@@ -138,20 +150,26 @@ class DewartPG {
      */
     _prepareHashParams(params) {
         let result = [];
-        let keys = Object.keys(params.hash);
-        for (let i = 0; i < keys.length; i++) {
-            result.push({
-                name: keys[i],
-                value: this._hash(params.hash[keys[i]]),
-            });
+        console.log(params);
+        if (params.hash !== undefined) {
+            let keys = Object.keys(params.hash);
+            for (let i = 0; i < keys.length; i++) {
+                result.push({
+                    name: keys[i],
+                    value: this._hash(params.hash[keys[i]]),
+                });
+            }
         }
-        keys = Object.keys(params.other);
-        for (let i = 0; i < keys.length; i++) {
-            result.push({
-                name: keys[i],
-                value: params.other[keys[i]],
-            });
+        if (params.other !== undefined) {
+            let keys = Object.keys(params.other);
+            for (let i = 0; i < keys.length; i++) {
+                result.push({
+                    name: keys[i],
+                    value: params.other[keys[i]],
+                });
+            }
         }
+
         return result;
     }
     /**
