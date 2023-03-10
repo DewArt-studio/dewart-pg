@@ -6,7 +6,7 @@ const Pool = pg.Pool;
  * @author DewArt Studio
  * @class
  */
-class DewartPG {
+export default class DewartPG {
     /**
      * Creates an object to work with the database
      * @param {Object} input input data
