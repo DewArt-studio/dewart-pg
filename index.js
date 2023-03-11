@@ -46,10 +46,10 @@ export default class DewartPG {
      */
     query(query, values, callback, error) {
         this._pool.connect((err, client, release) => {
-            if (err) return error(err);
+            if (err && typeof error === "function") return error(err);
             client.query(query, values, (err, result) => {
                 release();
-                if (err && typeof err === "function") return error(err);
+                if (err && typeof error === "function") return error(err);
                 if (typeof callback === "function") return callback(result);
             });
         });
@@ -108,7 +108,7 @@ export default class DewartPG {
             }
             this.query(query, values, callback, error);
         } catch (err) {
-            if (err && typeof err === "function") return error(err);
+            if (err && typeof error === "function") return error(err);
         }
     }
 
